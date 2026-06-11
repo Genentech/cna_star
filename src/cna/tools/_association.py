@@ -1,0 +1,270 @@
+import numpy as np
+import pandas as pd
+import scipy.stats as st
+import gc, warnings, sys
+from argparse import Namespace
+from ._stats import conditional_permutation, empirical_fdrs
+from ._nam import nam, _df_to_array
+from ._out import select_output
+import statsmodels.api as sm
+
+from tqdm import tqdm
+from sklearn.cluster import MiniBatchKMeans
+
+def _association(NAMsvd, NAMresid, M, r, y, batches, ks=None, Nnull=1000, Nbs=100, force_permute_all=False,
+                 local_test=True, seed=None, show_progress=False, include_diag=False, intercept=False,
+                 cluster_neighborhood=False, num_kmeans_cluster=50):
+    # output level
+    out = select_output(show_progress)
+    offset = int(include_diag==False)
+
+    if seed is not None:
+        np.random.seed(seed)
+    if force_permute_all:
+        batches = np.ones(len(y))
+
+    # prep data
+    (U, sv, V) = NAMsvd
+    y = (y - y.mean())/y.std()
+    n = len(y)
+
+    if ks is None:
+        incr = max(int(0.02*n), 1)
+        maxnpcs = min(4*incr, max(int(n/5),1))
+        ks = np.arange(incr, maxnpcs+1, incr)
+    
+    ks = [k for k in ks if n - (1 + r + k) > 0] 
+
+    def _reg(q, k):
+        Xpc = U[:,:k]
+        beta = Xpc.T.dot(q) #Xpc.T.dot(Xpc) = I so no need to compute it
+        qhat = Xpc.dot(beta)
+        return qhat, beta
+
+    def _stats(yhat, ycond, k):
+        ssefull = (yhat - ycond).dot(yhat - ycond)
+        ssered = ycond.dot(ycond)
+        deltasse =  ssered - ssefull
+        f = (deltasse / k) / (ssefull/n)
+        p = st.f.sf(f, k, n-(1+r+k)) # F test
+        r2 = 1 - ssefull/ssered
+        return p, r2
+
+    def _minp_stats(z):
+        zcond = M.dot(z)
+        zcond = zcond / zcond.std()
+        ps, r2s = np.array([
+            _stats(
+                _reg(zcond, k)[0],
+                zcond,
+                k)
+            for k in ks
+        ]).T
+        k_ = np.argmin(ps)
+        return ks[k_], ps[k_], r2s[k_]
+
+
+    def _covmat_to_vec(cov_mat, offset=1):
+        nsample = cov_mat.shape[0]
+        idx = np.triu_indices(nsample, k=offset)
+        vec = cov_mat[idx]        
+        return vec
+
+
+    def _get_reg_wgt_local(ndonor, offset):
+        """
+        estimate the regression weights for wls
+        """
+        pred_var = np.ones((ndonor, ndonor))
+        np.fill_diagonal(pred_var, 2.0)
+        reg_wgt = 1.0 / _covmat_to_vec(pred_var, offset=offset)
+
+        return reg_wgt
+
+    def _mom(NAMresid, y, offset=1, intercept=False):
+
+        ndonor, ncell = NAMresid.shape
+
+        cp_mat = np.outer(y, y)
+        idx = np.triu_indices(ndonor, k=offset)
+        cp = cp_mat[idx]
+
+        dim = int(ndonor*(ndonor-1) / 2) + (1-offset)*ndonor
+        M = np.zeros((dim, 2+int(intercept)-offset))
+        if intercept == True:
+            M[:,-1] = 1.0
+        if offset == 0:
+            M[:,1] = np.eye(ndonor)[idx]
+
+        all_varexp = np.zeros(ncell)
+        all_varexp_anse = np.zeros(ncell)
+        for i in range(ncell):
+            rel_mat = np.outer(NAMresid[:,i], NAMresid[:,i])
+            reg_wgt = _get_reg_wgt_local(ndonor, offset)
+            M[:,0] = rel_mat[idx]
+            wls_model = sm.WLS(cp, M, weights=reg_wgt)
+            results = wls_model.fit()
+            all_varexp[i] = results.params[0]
+            all_varexp_anse[i] = results.bse[0]
+       
+        return all_varexp, all_varexp_anse
+
+    def _get_varexp(NAMresid, y, offset=1, intercept=False):
+
+        # get regression weight
+        ndonor, ncell = NAMresid.shape
+        
+        # get variance explained
+        varexp, varexp_anse = _mom(NAMresid, y, offset=offset, intercept=intercept)
+
+        # skip bootstrap
+        if Nbs == 0:
+            varexp_bsse = np.zeros(varexp.shape[0])
+            varexp_bsse.fill(np.nan)
+            return varexp, varexp_anse, varexp_bsse
+
+        # run bootstrap
+        all_varexp_bs = np.zeros((Nbs, ncell))
+        all_idx = np.array(range(ndonor))
+        for i in tqdm(range(Nbs)):
+            idx = np.random.choice(all_idx, size=ndonor, replace=True)
+            all_varexp_bs[i,:] = _mom(NAMresid[idx,:], y[idx], offset)
+
+        return varexp, varexp_anse, all_varexp_bs.std(axis=0)
+
+    # get non-null f-test p-value
+    k, p, r2 = _minp_stats(y)
+    if k == max(ks):
+        warnings.warn(('data supported use of {} NAM PCs, which is the maximum considered. '+\
+            'Consider allowing more PCs by using the "ks" argument.').format(k))
+
+    # compute coefficients and r2 with chosen model
+    ycond = M.dot(y)
+    ycond /= ycond.std()
+    yhat, beta = _reg(ycond, k)
+    _, fullbeta = _reg(ycond, n)
+    r2_perpc = (beta / np.sqrt(ycond.dot(ycond)))**2
+
+    # get neighborhood varexp
+    print('computing variance explained by NAMresid')
+    nbhood_varexp, nbhood_varexp_anse, nbhood_varexp_bsse = \
+            _get_varexp(NAMresid, y, offset=offset, intercept=intercept)
+
+    # cluster neighborhood
+    print('clustering neighborhood')
+    nbhood_cluster = np.zeros(NAMresid.shape[1])
+    nbhood_cluster.fill(np.nan)
+    if cluster_neighborhood == True:
+        kmeans = MiniBatchKMeans(n_clusters=num_kmeans_cluster,
+                    batch_size=int(0.05*NAMresid.shape[1]),
+                    random_state=seed, n_init='auto')
+        nbhood_cluster = kmeans.fit(NAMresid.T).labels_
+
+    # get neighborhood coefficients
+    ncorrs = (y[:,None]*NAMresid).mean(axis=0)
+
+    # compute final p-value using Nnull null f-test p-values
+    y_ = conditional_permutation(batches, y, Nnull)
+    nullminps, nullr2s = np.array([_minp_stats(y__)[1:] for y__ in y_.T]).T
+    pfinal = ((nullminps <= p+1e-8).sum() + 1)/(Nnull + 1)
+    if (nullminps <= p+1e-8).sum() == 0:
+        warnings.warn('global association p-value attained minimal possible value. '+\
+                'Consider increasing Nnull')
+    
+    # get neighborhood fdrs if requested
+    fdrs, fdr_5p_t, fdr_10p_t = None, None, None
+    if local_test:
+        print('computing neighborhood-level FDRs', file=out)
+        Nnull = min(1000, Nnull)
+        y_ = y_[:,:Nnull]
+        ycond_ = M.dot(y_)
+        ycond_ /= ycond_.std(axis=0)
+        gamma_ = U[:,:k].T.dot(ycond_)
+        nullncorrs = np.abs(NAMresid.T.dot(ycond_) / n)
+
+        maxcorr = np.abs(ncorrs).max()
+        fdr_thresholds = np.arange(maxcorr/4, maxcorr, maxcorr/400)
+        fdr_vals = empirical_fdrs(ncorrs, nullncorrs, fdr_thresholds)
+
+        fdrs = pd.DataFrame({
+            'threshold':fdr_thresholds,
+            'fdr':fdr_vals,
+            'num_detected': [(np.abs(ncorrs)>t).sum() for t in fdr_thresholds]})
+
+        # find maximal FDR<5% and FDR<10% sets
+        if np.min(fdrs.fdr)>0.05:
+            fdr_5p_t = None
+        else:
+            fdr_5p_t = fdrs[fdrs.fdr <= 0.05].iloc[0].threshold
+        if np.min(fdrs.fdr)>0.1:
+            fdr_10p_t = None
+        else:
+            fdr_10p_t = fdrs[fdrs.fdr <= 0.1].iloc[0].threshold
+
+        del gamma_, nullncorrs
+
+    del y_
+
+    res = {'p':pfinal, 'nullminps':nullminps, 'k':k,
+            'ncorrs':ncorrs, 'fdrs':fdrs,
+            'fdr_5p_t':fdr_5p_t, 'fdr_10p_t':fdr_10p_t, 
+			'yresid_hat':yhat, 'yresid':ycond, 'ks':ks, 'beta':beta,
+            'r2':r2, 'r2_perpc':r2_perpc, 'nullr2s': nullr2s,
+            'nullr2_mean':nullr2s.mean(), 'nullr2_std':nullr2s.std(),
+            'nbhood_varexp':nbhood_varexp,
+            'nbhood_varexp_anse':nbhood_varexp_anse,
+            'nbhood_varexp_bsse':nbhood_varexp_bsse,
+            'nbhood_cluster': nbhood_cluster}
+
+    return Namespace(**res)
+
+
+def association(data, y, batches=None, covs=None, nsteps=None, suffix='',
+    force_recompute=False, show_progress=False, allow_low_sample_size=False, **kwargs):
+    # output level
+    out = select_output(show_progress)
+    
+    # formatting and error checking
+    if batches is None:
+        batches = np.ones(data.N)
+    covs = _df_to_array(data, covs)
+    batches = _df_to_array(data, batches)
+    y = _df_to_array(data, y)
+    if y.shape != (data.N,):
+        raise ValueError(
+            'y should be an array of length data.N; instead its shape is: '+str(y.shape))
+    if data.N < 10 and not allow_low_sample_size:
+        raise ValueError(
+            'Dataset has fewer than 10 samples. CNA may have poor power at low sample sizes '+\
+            'because its null distribution is one in which each sample\'s single-cell profile '+\
+            'is unchanged but the sample labels are randomly assigned. If you want to run CNA '+\
+            'at this sample size despite the possibility of low power, you can do so by '+\
+            'invoking the association(...) function with the argument '+\
+            'allow_low_sample_size=True.')
+
+    if covs is not None:
+        filter_samples = ~(np.isnan(y) | np.any(np.isnan(covs), axis=1))
+    else:
+        filter_samples = ~np.isnan(y)
+
+    du = data.uns
+    nam(data, batches=batches, covs=covs, filter_samples=filter_samples,
+                    nsteps=nsteps, suffix=suffix, force_recompute=force_recompute,
+                    show_progress=show_progress,
+                    **kwargs)
+    NAMsvd = (
+        du['NAM_sampleXpc'+suffix].values,
+        du['NAM_svs'+suffix],
+        du['NAM_nbhdXpc'+suffix].values
+        )
+
+    print('performing association test', file=out)
+    res = _association(NAMsvd, du['NAM_resid.T'+suffix].T, du['_M'+suffix], du['_r'+suffix],
+        y[du['_filter_samples'+suffix]], batches[du['_filter_samples'+suffix]],
+        show_progress=show_progress,
+        **kwargs)
+
+    # add info about kept cells
+    vars(res)['kept'] = du['keptcells'+suffix]
+
+    return res
