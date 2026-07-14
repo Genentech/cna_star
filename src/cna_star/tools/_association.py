@@ -113,7 +113,7 @@ def _association(NAMsvd, NAMresid, M, r, y, batches, ks=None, Nnull=1000, Nbs=10
 
         # get regression weight
         ndonor, ncell = NAMresid.shape
-        
+
         # get variance explained
         varexp, varexp_anse = _mom(NAMresid, y, offset=offset, intercept=intercept)
 
@@ -128,7 +128,7 @@ def _association(NAMsvd, NAMresid, M, r, y, batches, ks=None, Nnull=1000, Nbs=10
         all_idx = np.array(range(ndonor))
         for i in tqdm(range(Nbs)):
             idx = np.random.choice(all_idx, size=ndonor, replace=True)
-            all_varexp_bs[i,:] = _mom(NAMresid[idx,:], y[idx], offset)
+            all_varexp_bs[i,:] = _mom(NAMresid[idx,:], y[idx], offset)[0]
 
         return varexp, varexp_anse, all_varexp_bs.std(axis=0)
 
