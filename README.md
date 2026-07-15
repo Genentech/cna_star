@@ -1,6 +1,6 @@
 # CNA*
 
-CNA* is an exention of [CNA](https://github.com/immunogenomics/cna) ([Reshef*, Rumker* et al. 2022 Nat Biotech](https://www.nature.com/articles/s41587-021-01066-4)), for estimating the variance in disease phenotypes explained by variations in cell abundance in each cell neighborhoods across donors.
+CNA* is an exention of [CNA](https://github.com/immunogenomics/cna) ([Reshef*, Rumker* et al. 2022 Nat Biotech](https://www.nature.com/articles/s41587-021-01066-4)), for estimating, $\sigma^2_{na}$, the variance in disease phenotypes explained by variations in cell abundance in each cell neighborhoods across donors.
 
 # Installation
 
@@ -31,6 +31,25 @@ Once the required packages to run CNA* are installed, the user may then install 
 ```shell
 git clone git@github.com:Genentech/cna_star.git
 ```
+
+# Using CNA*
+
+## Estimating $\sigma^2_{na}$ for individual cell neighborhoods
+
+The user may use the [demo for CNA](https://github.com/immunogenomics/cna/blob/master/demo/demo.ipynb) as a reference, since CNA* has a similar interface as CNA.
+
+CNA* also supports the following function arguments in ```cna_star.tl.association```:
+
+* ```Nbs``` -- number of bootstrap samples for estimating standard errors of $\sigma^2_{na}$ for individual cell neighborhood
+* ```cluster_neighborhood``` -- if set to ```True```, CNA* will perform clustering of cell neighborhoods based on the neighborhood abundance matrix
+* ```num_kmeans_cluster``` -- number of neighborhood clusters for statistical block bootstrap for estimating standard errors for aggregated $\sigma^2_{na}$
+
+CNA* returns the following results in addition the outputs from CNA:
+
+* ```nbhood_varexp``` -- $\sigma^2_{na}$ at each cell neighborhood
+* ```nbhood_varexp_anse``` -- analytical standard error for $\sigma^2_{na}$
+* ```nbhood_varexp_bsse``` -- bootstrap standard error for $\sigma^2_{na}$ (if ```Nbs``` > 0)
+* ```nbhood_cluster``` -- cluster that cell neighborhood is assigned to (if ```cluster_neighborhood``` is set to ```True```)
 
 # Testing CNA*
 
