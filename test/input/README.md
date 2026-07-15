@@ -1,0 +1,1 @@
+This directory contains the input files for CNA* analysis.
