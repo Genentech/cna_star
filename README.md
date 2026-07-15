@@ -1,6 +1,6 @@
 # CNA*
 
-CNA* is an exention of [CNA](https://github.com/immunogenomics/cna), for estimating the variance in disease phenotypes explained by variations in cell abundance in each cell neighborhoods across donors.
+CNA* is an exention of [CNA](https://github.com/immunogenomics/cna) ([Reshef*, Rumker* et al. 2022 Nat Biotech](https://www.nature.com/articles/s41587-021-01066-4)), for estimating the variance in disease phenotypes explained by variations in cell abundance in each cell neighborhoods across donors.
 
 # Installation
 
@@ -42,4 +42,4 @@ Please create a GitHub issue if you experience any issue with running scEPS.
 
 # Reference
 
-The current draft of the manuscript is available [here](https://www.medrxiv.org/content/10.64898/2026.06.26.26356714v1).
+The current draft of the manuscript that describes CNA* is available [here](https://www.medrxiv.org/content/10.64898/2026.06.26.26356714v1).
