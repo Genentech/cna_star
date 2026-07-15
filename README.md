@@ -51,6 +51,16 @@ CNA* returns the following results in addition the outputs from CNA:
 * ```nbhood_varexp_bsse``` -- bootstrap standard error for $\sigma^2_{na}$ (if ```Nbs``` > 0)
 * ```nbhood_cluster``` -- cluster that cell neighborhood is assigned to (if ```cluster_neighborhood``` is set to ```True```)
 
+## Aggregating $\sigma^2_{na}$ across cell neighborhoods
+
+We provide a Python tool, ```aggregate_cna.py```, for aggregating $\sigma^2_{na}$ across cell neighborhoods. The tool implements the following command line options:
+
+* ```--cna-ncorrs``` -- a data frame (stored in parquet format) that contains $\sigma^2_{na}$ at each cell neighborhood obtained from running CNA*. The data frame should also have columns for donor IDs, cell type labels, neighborhood cluster assignment.
+* ```--cell-type-col``` -- the column name for cell type labels
+* ```--donor-id-col``` -- the column name for donor IDs
+* ```--block-bootstrap``` -- the column name for neighborhood cluster assignment for performing block bootstrap
+* ```--out``` -- the output file name
+
 # Testing CNA*
 
 We provide examples script to test CNA* [here](https://github.com/Genentech/cna_star/tree/master/test).
