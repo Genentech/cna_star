@@ -32,11 +32,11 @@ Once the required packages to run CNA* are installed, the user may then install 
 git clone git@github.com:Genentech/cna_star.git
 ```
 
-# Using CNA*
+# Running CNA*
 
 ## Estimating $\sigma^2_{na}$ for individual cell neighborhoods
 
-The user may use the [demo for CNA](https://github.com/immunogenomics/cna/blob/master/demo/demo.ipynb) as a reference, since CNA* has a similar interface as CNA.
+The user may use the [demo for CNA](https://github.com/immunogenomics/cna/blob/master/demo/demo.ipynb) as a reference, since CNA* has a similar interface as that of CNA.
 
 CNA* also supports the following function arguments in ```cna_star.tl.association```:
 
@@ -67,7 +67,7 @@ We provide examples script to test CNA* [here](https://github.com/Genentech/cna_
 
 # Contact
 
-Please create a GitHub issue if you experience any issue with running scEPS.
+Please create a GitHub issue if you experience any issue with running CNA*.
 
 # Reference
 
